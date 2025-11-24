@@ -1,75 +1,171 @@
-const jwt = require ('jsonwebtoken')
-const bcrypt = require ('bcryptjs')
-const asyncHandler = require('express-async-handler')
-const User = require('../models/usersModel')
+/**
+ * Controlador de Autenticación
+ * Maneja registro, login y perfil de usuarios
+ */
 
-const login = asyncHandler(async(req,res) => {
-    const {email, password} = req.body
-    //verificamos que el usuario exista
-    const user = await User.findOne({email})
+const asyncHandler = require('express-async-handler');
+const User = require('../models/usersModel');
+const { generarToken } = require('../utils/jwt.util');
+const { hashPassword, comparePassword } = require('../utils/bcrypt.util');
+const { ROLES, MENSAJES_ERROR } = require('../utils/constants');
 
-    ///Si el Usuario existe verifico el hash
-    if(user &&(await bcrypt.compare(password, user.password))){
-        res.status(200).json({
-            _id: user.id,
-            nombre: user.nombre,
-            email: user.email,
-            token: generarToken(user.id)
-        })
+/**
+ * @desc    Registrar nuevo usuario
+ * @route   POST /api/auth/register
+ * @access  Público
+ */
+const register = asyncHandler(async (req, res) => {
+    const { nombre, email, password, rol } = req.body;
+    
+    // Verificar campos requeridos
+    if (!nombre || !email || !password) {
+        res.status(400);
+        throw new Error('Faltan datos requeridos');
     }
-
-})
-
-const register = asyncHandler(async(req,res) => {
-    const {nombre, email, password} = req.body
-    if (!nombre || !email || !password){
-        res.status(400)
-        throw new Error('Faltan datos')
+    
+    // Verificar si el usuario ya existe
+    const userExists = await User.findOne({ email: email.toLowerCase() });
+    if (userExists) {
+        res.status(400);
+        throw new Error('El email ya está registrado');
     }
-    const userExists = await User.findOne({email})
-    if (userExists){
-        res.status(400)
-        throw new Error('Ese usuario ya no existe')
-    } else{
-        //hash password
-        const salt = await bcrypt.genSalt(10)
-        const passwordHashed = await bcrypt.hash(password, salt)
-
-        //crear usuario
-        const user = await User.create({
-            nombre,
-            email,
-            password: passwordHashed
-
-        })
-
-        //Si usuario se creo correctamente; lo muestro
-        if(user){
-            res.status(201).json({
-                _id: user.id,
+    
+    // Hash de la contraseña
+    const passwordHashed = await hashPassword(password);
+    
+    // Crear usuario (solo admin puede asignar rol diferente a cliente)
+    const nuevoRol = rol && req.user?.rol === ROLES.ADMIN ? rol : ROLES.CLIENTE;
+    
+    const user = await User.create({
+        nombre,
+        email: email.toLowerCase(),
+        password: passwordHashed,
+        rol: nuevoRol
+    });
+    
+    if (user) {
+        res.status(201).json({
+            success: true,
+            data: {
+                _id: user._id,
                 nombre: user.nombre,
                 email: user.email,
-                password: user.password
-            })
-            
-        }else{
-            res.status(400)
-            throw new Error ('No se pudieron guardar los datos')
-        }
+                rol: user.rol,
+                token: generarToken(user._id, user.rol)
+            }
+        });
+    } else {
+        res.status(400);
+        throw new Error('No se pudo crear el usuario');
     }
+});
 
-})
+/**
+ * @desc    Login de usuario
+ * @route   POST /api/auth/login
+ * @access  Público
+ */
+const login = asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+    
+    // Verificar campos requeridos
+    if (!email || !password) {
+        res.status(400);
+        throw new Error('Email y contraseña son requeridos');
+    }
+    
+    // Buscar usuario incluyendo password
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    
+    if (!user) {
+        res.status(401);
+        throw new Error('Credenciales inválidas');
+    }
+    
+    // Verificar que el usuario esté activo
+    if (!user.activo) {
+        res.status(401);
+        throw new Error('Usuario desactivado');
+    }
+    
+    // Verificar contraseña
+    const isMatch = await comparePassword(password, user.password);
+    
+    if (!isMatch) {
+        res.status(401);
+        throw new Error('Credenciales inválidas');
+    }
+    
+    res.status(200).json({
+        success: true,
+        data: {
+            _id: user._id,
+            nombre: user.nombre,
+            email: user.email,
+            rol: user.rol,
+            token: generarToken(user._id, user.rol)
+        }
+    });
+});
 
-const data = asyncHandler(async(req,res) => {
-    res.status(200).json(req.user)
-})
+/**
+ * @desc    Obtener perfil del usuario autenticado
+ * @route   GET /api/auth/profile
+ * @access  Privado
+ */
+const getProfile = asyncHandler(async (req, res) => {
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+        res.status(404);
+        throw new Error(MENSAJES_ERROR.USUARIO_NO_ENCONTRADO);
+    }
+    
+    res.status(200).json({
+        success: true,
+        data: user
+    });
+});
 
-const generarToken = (id) => {
-    return jwt.sign({id},process.env.JWT_SECRET, {
-        expiresIn: '30d'
-    })
-}
+/**
+ * @desc    Actualizar perfil del usuario autenticado
+ * @route   PUT /api/auth/profile
+ * @access  Privado
+ */
+const updateProfile = asyncHandler(async (req, res) => {
+    const { nombre, email, password } = req.body;
+    
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+        res.status(404);
+        throw new Error(MENSAJES_ERROR.USUARIO_NO_ENCONTRADO);
+    }
+    
+    // Verificar si el email nuevo ya existe
+    if (email && email.toLowerCase() !== user.email) {
+        const emailExists = await User.findOne({ email: email.toLowerCase() });
+        if (emailExists) {
+            res.status(400);
+            throw new Error('El email ya está en uso');
+        }
+        user.email = email.toLowerCase();
+    }
+    
+    if (nombre) user.nombre = nombre;
+    if (password) user.password = await hashPassword(password);
+    
+    const updatedUser = await user.save();
+    
+    res.status(200).json({
+        success: true,
+        data: updatedUser
+    });
+});
 
 module.exports = {
-    login, register, data
-}
+    register,
+    login,
+    getProfile,
+    updateProfile
+};
