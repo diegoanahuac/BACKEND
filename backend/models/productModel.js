@@ -53,8 +53,15 @@ const productSchema = mongoose.Schema({
     imagen: {
         type: String,
         trim: true,
-        // Validación básica de URL
-        match: [/^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([\/\w .-]*)*\/?$|^$/, 'URL de imagen no válida']
+        // Validación simple de URL sin riesgo de ReDoS
+        validate: {
+            validator: function(v) {
+                if (!v || v === '') return true; // Permitir vacío
+                // Patrón seguro que evita backtracking exponencial
+                return /^https?:\/\/[^\s]+$/.test(v);
+            },
+            message: 'URL de imagen no válida'
+        }
     },
     activo: {
         type: Boolean,

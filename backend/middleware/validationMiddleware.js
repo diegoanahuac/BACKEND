@@ -147,6 +147,7 @@ const productValidationRules = {
         body('imagen')
             .optional()
             .trim()
+            .isURL().withMessage('La imagen debe ser una URL válida')
     ],
     updateStock: [
         body('cantidad')

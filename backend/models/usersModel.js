@@ -19,7 +19,14 @@ const userSchema = mongoose.Schema({
         unique: true,
         trim: true,
         lowercase: true,
-        match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Por favor ingresa un email válido']
+        // Validación simple de email sin riesgo de ReDoS
+        validate: {
+            validator: function(v) {
+                // Patrón seguro que evita backtracking exponencial
+                return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+            },
+            message: 'Por favor ingresa un email válido'
+        }
     },
     password: {
         type: String,
