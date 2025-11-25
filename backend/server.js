@@ -69,9 +69,6 @@ app.use('/api/orders', require('./routes/orderRoutes'));
 // Rutas de roles (solo admin)
 app.use('/api/roles', require('./routes/roleRoutes'));
 
-// Mantener rutas legacy para compatibilidad
-app.use('/api/tareas', require('./routes/tareasRoutes'));
-
 // Ruta de bienvenida / health check
 app.get('/', (req, res) => {
     res.json({
